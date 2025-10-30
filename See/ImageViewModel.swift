@@ -19,6 +19,7 @@ class ImageViewModel: ObservableObject {
     @Published var zoomScale: CGFloat = 1.0
     @Published var imageOffset: CGSize = .zero
     @Published var rotationAngle: Angle = .zero
+    @Published var saveError: String?
     
     var mouseLocation: CGPoint = .zero
     var viewSize: CGSize = .zero
@@ -58,8 +59,11 @@ class ImageViewModel: ObservableObject {
                                 bookmarkDataIsStale: &isStale)
                 
                 if !isStale {
-                    _ = url.startAccessingSecurityScopedResource()
-                    accessedFolders.append(url)
+                    if url.startAccessingSecurityScopedResource() {
+                        accessedFolders.append(url)
+                    } else {
+                        staleBookmarks.append(path)
+                    }
                 } else {
                     staleBookmarks.append(path)
                 }
@@ -87,10 +91,11 @@ class ImageViewModel: ObservableObject {
             bookmarks[url.path] = bookmarkData
             UserDefaults.standard.set(bookmarks, forKey: bookmarksKey)
             
-            // Keep track of accessed folders
-            if !accessedFolders.contains(url) {
-                _ = url.startAccessingSecurityScopedResource()
-                accessedFolders.append(url)
+            // Keep track of accessed folders (check by path, not instance)
+            if !accessedFolders.contains(where: { $0.path == url.path }) {
+                if url.startAccessingSecurityScopedResource() {
+                    accessedFolders.append(url)
+                }
             }
         } catch {
             print("Failed to create bookmark for \(url.path): \(error)")
@@ -125,7 +130,7 @@ class ImageViewModel: ObservableObject {
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
-        panel.message = "Select a folder to view images"
+        panel.message = "Select a folder to view images\n\nThis will grant read and write permissions to save rotated images."
         panel.prompt = "Choose Folder"
         
         panel.begin { [weak self] response in
@@ -160,7 +165,7 @@ class ImageViewModel: ObservableObject {
             folderPanel.canChooseFiles = false
             folderPanel.allowsMultipleSelection = false
             folderPanel.directoryURL = directory
-            folderPanel.message = "Allow access to this folder to view all images"
+            folderPanel.message = "Grant read and write access to this folder\n\nThis allows viewing images and saving rotated images."
             folderPanel.prompt = "Grant Access"
             
             folderPanel.begin { [weak self] response in
@@ -359,6 +364,209 @@ class ImageViewModel: ObservableObject {
     
     func resetRotation() {
         rotationAngle = .zero
+    }
+    
+    // MARK: - Save Methods
+    
+    func saveImage() {
+        guard let image = currentImage,
+              let imagePath = currentImagePath else {
+            saveError = "No image loaded"
+            return
+        }
+        
+        // Only save if there's a rotation applied
+        guard rotationAngle.degrees != 0 else {
+            return
+        }
+        
+        // Apply rotation to the image
+        let rotatedImage = rotateImage(image, by: rotationAngle.degrees)
+        
+        // Try to save with security-scoped access
+        let folderURL = imagePath.deletingLastPathComponent()
+        
+        // Check if we have a bookmark for this folder
+        var hasAccess = false
+        for accessedFolder in accessedFolders {
+            if folderURL.path.hasPrefix(accessedFolder.path) {
+                hasAccess = true
+                break
+            }
+        }
+        
+        // If we don't have access, request it
+        if !hasAccess {
+            // Request access to the folder
+            let openPanel = NSOpenPanel()
+            openPanel.message = "Grant write permission to save the rotated image\n\nPlease select the folder containing the image."
+            openPanel.prompt = "Grant Write Access"
+            openPanel.canChooseFiles = false
+            openPanel.canChooseDirectories = true
+            openPanel.canCreateDirectories = false
+            openPanel.directoryURL = folderURL
+            
+            openPanel.begin { [weak self] response in
+                guard let self = self else { return }
+                
+                if response == .OK, let selectedURL = openPanel.url {
+                    // Save the bookmark (this also starts accessing the resource)
+                    self.saveBookmark(for: selectedURL)
+                    
+                    // Now try to save
+                    self.performSave(rotatedImage, to: imagePath)
+                } else {
+                    self.saveError = "Permission denied to save the file"
+                }
+            }
+        } else {
+            // We have access, just save
+            performSave(rotatedImage, to: imagePath)
+        }
+    }
+    
+    private func performSave(_ rotatedImage: NSImage, to url: URL) {
+        if saveImage(rotatedImage, to: url) {
+            // Reset rotation angle after saving
+            rotationAngle = .zero
+            saveError = nil
+            // Reload the image to show the saved version
+            loadCurrentImage()
+        } else {
+            saveError = "Failed to save the image. Please check file permissions."
+        }
+    }
+    
+    private func rotateImage(_ image: NSImage, by degrees: Double) -> NSImage {
+        // Normalize the angle to 0, 90, 180, or 270
+        let normalizedDegrees = Int(degrees.truncatingRemainder(dividingBy: 360))
+        let rotationDegrees = ((normalizedDegrees % 360) + 360) % 360
+        
+        guard rotationDegrees != 0 else { return image }
+        
+        // Get the image representation
+        guard let imageData = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: imageData) else {
+            return image
+        }
+        
+        // Calculate new size based on rotation
+        let originalWidth = bitmap.pixelsWide
+        let originalHeight = bitmap.pixelsHigh
+        
+        let newWidth: Int
+        let newHeight: Int
+        
+        if rotationDegrees == 90 || rotationDegrees == 270 {
+            newWidth = originalHeight
+            newHeight = originalWidth
+        } else {
+            newWidth = originalWidth
+            newHeight = originalHeight
+        }
+        
+        // Create a new bitmap context with the rotated size
+        let newBitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: newWidth,
+            pixelsHigh: newHeight,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        )
+        
+        guard let newBitmap = newBitmap else { return image }
+        
+        // Create graphics context and apply rotation
+        NSGraphicsContext.saveGraphicsState()
+        let context = NSGraphicsContext(bitmapImageRep: newBitmap)
+        NSGraphicsContext.current = context
+        
+        let transform = NSAffineTransform()
+        
+        // Note: NSAffineTransform rotates counter-clockwise for positive angles,
+        // but SwiftUI's rotationEffect rotates clockwise, so we need to negate
+        switch rotationDegrees {
+        case 90:
+            // Rotate 90° clockwise = -90° in NSAffineTransform
+            transform.translateX(by: 0, yBy: CGFloat(newHeight))
+            transform.rotate(byDegrees: -90)
+        case 180:
+            transform.translateX(by: CGFloat(newWidth), yBy: CGFloat(newHeight))
+            transform.rotate(byDegrees: -180)
+        case 270:
+            // Rotate 270° clockwise = -270° in NSAffineTransform
+            transform.translateX(by: CGFloat(newWidth), yBy: 0)
+            transform.rotate(byDegrees: -270)
+        default:
+            break
+        }
+        
+        transform.concat()
+        
+        // Draw the original image
+        let rect = NSRect(x: 0, y: 0, width: originalWidth, height: originalHeight)
+        bitmap.draw(in: rect)
+        
+        NSGraphicsContext.restoreGraphicsState()
+        
+        // Create new image from the rotated bitmap
+        let rotatedImage = NSImage(size: NSSize(width: newWidth, height: newHeight))
+        rotatedImage.addRepresentation(newBitmap)
+        
+        return rotatedImage
+    }
+    
+    private func saveImage(_ image: NSImage, to url: URL) -> Bool {
+        guard let imageData = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: imageData) else {
+            return false
+        }
+        
+        // Determine the file type from the URL extension
+        let fileExtension = url.pathExtension.lowercased()
+        let imageFileType: NSBitmapImageRep.FileType
+        
+        switch fileExtension {
+        case "jpg", "jpeg":
+            imageFileType = .jpeg
+        case "png":
+            imageFileType = .png
+        case "tiff", "tif":
+            imageFileType = .tiff
+        case "bmp":
+            imageFileType = .bmp
+        case "gif":
+            imageFileType = .gif
+        default:
+            imageFileType = .png
+        }
+        
+        // Get image data in the appropriate format
+        let properties: [NSBitmapImageRep.PropertyKey: Any]
+        if imageFileType == .jpeg {
+            properties = [.compressionFactor: 0.9]
+        } else {
+            properties = [:]
+        }
+        
+        guard let data = bitmap.representation(using: imageFileType, properties: properties) else {
+            return false
+        }
+        
+        // Write to file (security-scoped access already active from loadSavedBookmarks)
+        do {
+            try data.write(to: url, options: .atomic)
+            return true
+        } catch {
+            print("Failed to save image: \(error)")
+            saveError = error.localizedDescription
+            return false
+        }
     }
     
     func setZoom(_ scale: CGFloat, at point: CGPoint? = nil, in viewSize: CGSize? = nil) {

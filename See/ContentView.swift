@@ -26,6 +26,13 @@ struct ContentView: View {
             .toolbar { toolbarContent }
             .toolbarRole(.automatic)
             .persistentSystemOverlays(.hidden)
+            .alert("Save Error", isPresented: .constant(viewModel.saveError != nil)) {
+                Button("OK") {
+                    viewModel.saveError = nil
+                }
+            } message: {
+                Text(viewModel.saveError ?? "")
+            }
     }
     
     private var mainContent: some View {
@@ -188,6 +195,16 @@ struct ContentView: View {
                 .help("Rotate right 90° (⌘])")
             }
         }
+        
+        ToolbarItem(placement: .automatic) {
+            Button(action: {
+                viewModel.saveImage()
+            }) {
+                Label("Save", systemImage: "square.and.arrow.down")
+            }
+            .disabled(viewModel.currentImage == nil || viewModel.rotationAngle.degrees == 0)
+            .help("Save rotated image (⌘S)")
+        }
     
         ToolbarItem(placement: .automatic) {
             Button(action: {
@@ -262,6 +279,13 @@ struct KeyboardShortcutsModifier: ViewModifier {
             .onKeyPress(characters: .init(charactersIn: "]")) { press in
                 if press.modifiers.contains(.command) {
                     viewModel.rotateRight()
+                    return .handled
+                }
+                return .ignored
+            }
+            .onKeyPress(characters: .init(charactersIn: "sS")) { press in
+                if press.modifiers.contains(.command) {
+                    viewModel.saveImage()
                     return .handled
                 }
                 return .ignored

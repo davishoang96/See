@@ -20,6 +20,7 @@ A minimalist, fast image viewer for macOS with an elegant AMOLED black interface
   - `⌘0` - Reset zoom to 100%
   - `⌘[` - Rotate left 90°
   - `⌘]` - Rotate right 90°
+  - `⌘S` - Save rotated image
 - **Filmstrip View** - Visual thumbnail strip at bottom for quick image selection
   - Click thumbnails to jump to any image
   - Toggle visibility with toolbar button
@@ -41,17 +42,27 @@ A minimalist, fast image viewer for macOS with an elegant AMOLED black interface
   - Zooming out below 100%
   - Pressing reset zoom (⌘0)
 
-### Rotation
+### Rotation & Save
 - **Rotate Image** - Rotate images in 90° increments
   - Toolbar buttons for rotate left/right
   - Keyboard shortcuts (⌘[, ⌘])
   - Smooth animated rotation
   - Automatically resets when switching images
+- **Save Rotated Image** - Permanently save rotations to disk
+  - Click the save button in toolbar
+  - Keyboard shortcut (⌘S)
+  - Only enabled when rotation is applied
+  - Preserves original image format (JPEG, PNG, etc.)
+  - Auto-reloads image after saving
 
 ### Smart Folder Access
 - **Persistent Permissions** - Grant folder access once, use forever
+- **Read & Write Access** - Automatically requests both read and write permissions
+  - View images in the folder
+  - Save rotated images back to disk
 - **Security-Scoped Bookmarks** - Remembers folder permissions using macOS sandboxing
 - **Automatic Detection** - Filters out broken/corrupted images
+- **Clear Permission Dialogs** - Explains exactly what permissions are needed and why
 
 ### User Experience
 - **Compact Interface** - Hidden title bar with auto-hide in fullscreen
@@ -95,6 +106,8 @@ A minimalist, fast image viewer for macOS with an elegant AMOLED black interface
 2. Click "Open Image" or press `⌘O`
 3. Select an image file
 4. Grant folder access when prompted (one-time per folder)
+   - This grants both read and write permissions
+   - Allows viewing images and saving rotated images
 
 ### After Setup
 - Double-click any image to open in See (if set as default)
@@ -105,8 +118,10 @@ A minimalist, fast image viewer for macOS with an elegant AMOLED black interface
 
 See is fully sandboxed and only accesses:
 - Images you explicitly select
-- Folders you grant permission to
+- Folders you grant permission to (read and write access)
+- Write access is used only for saving rotated images
 - Permissions are stored locally using security-scoped bookmarks
+- No network access or data collection
 
 ## License
 
