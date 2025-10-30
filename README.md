@@ -77,6 +77,13 @@ A minimalist, fast image viewer for macOS with an elegant AMOLED black interface
 - **64x64 Thumbnails** - Center-cropped square thumbnails for consistent appearance
 - **Smooth Animations** - Filmstrip slides in/out with spring animation
 - **Auto Focus** - App automatically comes to foreground when opening images
+- **Image Information Sidebar** - View detailed EXIF metadata
+  - Click the info button or toggle sidebar
+  - Displays dimensions, file size, camera settings
+  - Shows EXIF data: aperture, shutter speed, ISO, focal length
+  - GPS coordinates if available
+  - Date taken, camera make/model
+  - Selectable text for easy copying
 
 ## Supported Formats
 

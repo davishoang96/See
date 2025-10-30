@@ -20,6 +20,7 @@ class ImageViewModel: ObservableObject {
     @Published var imageOffset: CGSize = .zero
     @Published var rotationAngle: Angle = .zero
     @Published var saveError: String?
+    @Published var exifData: [String: String] = [:]
     
     var mouseLocation: CGPoint = .zero
     var viewSize: CGSize = .zero
@@ -156,7 +157,7 @@ class ImageViewModel: ObservableObject {
         if hasSavedAccess(to: directory) {
             // We already have access, load the image and all images from folder
             currentImagePath = url
-            currentImage = NSImage(contentsOf: url)
+            currentImage = loadImageWithCorrectOrientation(from: url)
             loadImagesFromDirectory(directory, selectedFile: url)
         } else {
             // Ask for explicit permission to access the folder first
@@ -177,14 +178,14 @@ class ImageViewModel: ObservableObject {
                     
                     // Now load the selected image
                     self.currentImagePath = url
-                    self.currentImage = NSImage(contentsOf: url)
+                    self.currentImage = self.loadImageWithCorrectOrientation(from: url)
                     
                     // Load all images from the directory
                     self.loadImagesFromDirectory(folderURL, selectedFile: url)
                 } else {
                     // User denied access, just show the single image
                     self.currentImagePath = url
-                    self.currentImage = NSImage(contentsOf: url)
+                    self.currentImage = self.loadImageWithCorrectOrientation(from: url)
                     self.imageFiles = [url]
                     self.currentIndex = 0
                 }
@@ -207,7 +208,7 @@ class ImageViewModel: ObservableObject {
                 guard supportedImageExtensions.contains(ext) else { return false }
                 
                 // Verify the image can actually be loaded
-                return NSImage(contentsOf: url) != nil
+                return loadImageWithCorrectOrientation(from: url) != nil
             }.sorted { $0.lastPathComponent < $1.lastPathComponent }
             
             // Find the index of the selected file, or default to first image
@@ -242,7 +243,7 @@ class ImageViewModel: ObservableObject {
             guard let self = self else { return }
             
             for url in self.imageFiles {
-                if let image = NSImage(contentsOf: url) {
+                if let image = self.loadImageWithCorrectOrientation(from: url) {
                     let thumbnail = self.createThumbnail(from: image)
                     
                     DispatchQueue.main.async {
@@ -312,9 +313,151 @@ class ImageViewModel: ObservableObject {
         
         let url = imageFiles[currentIndex]
         currentImagePath = url
-        currentImage = NSImage(contentsOf: url)
+        currentImage = loadImageWithCorrectOrientation(from: url)
+        extractEXIFData(from: url)
         resetZoom()
         resetRotation()
+    }
+    
+    private func extractEXIFData(from url: URL) {
+        guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil) else {
+            exifData = [:]
+            return
+        }
+        
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(imageSource, 0, nil) as? [CFString: Any] else {
+            exifData = [:]
+            return
+        }
+        
+        var metadata: [String: String] = [:]
+        
+        // Basic image properties
+        if let width = properties[kCGImagePropertyPixelWidth] as? Int {
+            metadata["Dimensions"] = "\(width)"
+        }
+        if let height = properties[kCGImagePropertyPixelHeight] as? Int {
+            if let existing = metadata["Dimensions"] {
+                metadata["Dimensions"] = "\(existing) × \(height)"
+            } else {
+                metadata["Dimensions"] = "× \(height)"
+            }
+        }
+        
+        if let dpi = properties[kCGImagePropertyDPIWidth] as? Double {
+            metadata["DPI"] = String(format: "%.0f", dpi)
+        }
+        
+        if let colorModel = properties[kCGImagePropertyColorModel] as? String {
+            metadata["Color Model"] = colorModel
+        }
+        
+        if let depth = properties[kCGImagePropertyDepth] as? Int {
+            metadata["Depth"] = "\(depth) bits"
+        }
+        
+        // File info
+        if let fileSize = try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64 {
+            let formatter = ByteCountFormatter()
+            formatter.countStyle = .file
+            metadata["File Size"] = formatter.string(fromByteCount: fileSize)
+        }
+        
+        metadata["File Type"] = url.pathExtension.uppercased()
+        
+        // EXIF data
+        if let exif = properties[kCGImagePropertyExifDictionary] as? [CFString: Any] {
+            if let dateTime = exif[kCGImagePropertyExifDateTimeOriginal] as? String {
+                metadata["Date Taken"] = dateTime
+            }
+            if let camera = exif[kCGImagePropertyExifLensMake] as? String {
+                metadata["Camera"] = camera
+            } else if let make = properties[kCGImagePropertyTIFFDictionary] as? [CFString: Any],
+                      let makeName = make[kCGImagePropertyTIFFMake] as? String {
+                metadata["Camera Make"] = makeName
+            }
+            
+            if let model = properties[kCGImagePropertyTIFFDictionary] as? [CFString: Any],
+               let modelName = model[kCGImagePropertyTIFFModel] as? String {
+                metadata["Camera Model"] = modelName
+            }
+            
+            if let fNumber = exif[kCGImagePropertyExifFNumber] as? Double {
+                metadata["Aperture"] = String(format: "f/%.1f", fNumber)
+            }
+            
+            if let exposureTime = exif[kCGImagePropertyExifExposureTime] as? Double {
+                if exposureTime < 1 {
+                    metadata["Shutter Speed"] = String(format: "1/%.0f s", 1.0 / exposureTime)
+                } else {
+                    metadata["Shutter Speed"] = String(format: "%.1f s", exposureTime)
+                }
+            }
+            
+            if let iso = exif[kCGImagePropertyExifISOSpeedRatings] as? [Int], let isoValue = iso.first {
+                metadata["ISO"] = "\(isoValue)"
+            }
+            
+            if let focalLength = exif[kCGImagePropertyExifFocalLength] as? Double {
+                metadata["Focal Length"] = String(format: "%.1f mm", focalLength)
+            }
+            
+            if let flash = exif[kCGImagePropertyExifFlash] as? Int {
+                metadata["Flash"] = flash & 1 == 1 ? "On" : "Off"
+            }
+        }
+        
+        // GPS data
+        if let gps = properties[kCGImagePropertyGPSDictionary] as? [CFString: Any] {
+            if let lat = gps[kCGImagePropertyGPSLatitude] as? Double,
+               let latRef = gps[kCGImagePropertyGPSLatitudeRef] as? String,
+               let lon = gps[kCGImagePropertyGPSLongitude] as? Double,
+               let lonRef = gps[kCGImagePropertyGPSLongitudeRef] as? String {
+                metadata["GPS"] = String(format: "%.6f° %@, %.6f° %@", lat, latRef, lon, lonRef)
+            }
+        }
+        
+        exifData = metadata
+    }
+    
+    private func loadImageWithCorrectOrientation(from url: URL) -> NSImage? {
+        // Load image with EXIF orientation properly applied to pixels
+        // This ensures the image appears correctly oriented, and any EXIF rotation
+        // is baked into the pixel data
+        guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil) else {
+            return NSImage(contentsOf: url) // Fallback to default loading
+        }
+        
+        // Get image properties to determine max size
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(imageSource, 0, nil) as? [CFString: Any] else {
+            return NSImage(contentsOf: url) // Fallback
+        }
+        
+        let maxPixelSize = max(
+            (properties[kCGImagePropertyPixelWidth] as? Int) ?? 8000,
+            (properties[kCGImagePropertyPixelHeight] as? Int) ?? 8000
+        )
+        
+        // Create image with orientation transformation applied
+        // kCGImageSourceCreateThumbnailWithTransform applies EXIF orientation to the pixels
+        let options: [CFString: Any] = [
+            kCGImageSourceShouldCache: true,
+            kCGImageSourceShouldAllowFloat: true,
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,  // This applies EXIF orientation
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
+        ]
+        
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(imageSource, 0, options as CFDictionary) else {
+            return NSImage(contentsOf: url) // Fallback
+        }
+        
+        // Create NSImage from properly oriented CGImage (EXIF rotation now baked into pixels)
+        let size = NSSize(width: cgImage.width, height: cgImage.height)
+        let image = NSImage(size: size)
+        image.addRepresentation(NSBitmapImageRep(cgImage: cgImage))
+        
+        return image
     }
     
     // MARK: - Zoom Methods
@@ -501,7 +644,7 @@ class ImageViewModel: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
             
-            if let image = NSImage(contentsOf: url) {
+            if let image = self.loadImageWithCorrectOrientation(from: url) {
                 let thumbnail = self.createThumbnail(from: image)
                 
                 DispatchQueue.main.async {
@@ -596,11 +739,20 @@ class ImageViewModel: ObservableObject {
     }
     
     private func saveImage(_ image: NSImage, to url: URL) -> Bool {
-        guard let imageData = image.tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: imageData) else {
-            return false
+        // Get the bitmap representation directly from the image
+        guard let bitmap = image.representations.first as? NSBitmapImageRep else {
+            // Fallback: create a new bitmap from the image
+            guard let imageData = image.tiffRepresentation,
+                  let fallbackBitmap = NSBitmapImageRep(data: imageData) else {
+                return false
+            }
+            return saveBitmap(fallbackBitmap, to: url)
         }
         
+        return saveBitmap(bitmap, to: url)
+    }
+    
+    private func saveBitmap(_ bitmap: NSBitmapImageRep, to url: URL) -> Bool {
         // Determine the file type from the URL extension
         let fileExtension = url.pathExtension.lowercased()
         let imageFileType: NSBitmapImageRep.FileType
@@ -620,27 +772,46 @@ class ImageViewModel: ObservableObject {
             imageFileType = .png
         }
         
-        // Get image data in the appropriate format
-        let properties: [NSBitmapImageRep.PropertyKey: Any]
+        // Create fresh bitmap data without any metadata
+        guard let cgImage = bitmap.cgImage else {
+            return false
+        }
+        
+        // Create a new destination for the image
+        guard let destination = CGImageDestinationCreateWithURL(
+            url as CFURL,
+            imageFileType == .jpeg ? UTType.jpeg.identifier as CFString :
+            imageFileType == .png ? UTType.png.identifier as CFString :
+            imageFileType == .tiff ? UTType.tiff.identifier as CFString :
+            imageFileType == .bmp ? UTType.bmp.identifier as CFString :
+            UTType.png.identifier as CFString,
+            1,
+            nil
+        ) else {
+            return false
+        }
+        
+        // Set properties with explicit orientation = 1 (normal, no rotation)
+        var properties: [CFString: Any] = [
+            kCGImagePropertyOrientation: 1  // Explicitly set to normal orientation
+        ]
+        
         if imageFileType == .jpeg {
-            properties = [.compressionFactor: 0.9]
-        } else {
-            properties = [:]
+            properties[kCGImageDestinationLossyCompressionQuality] = 0.9
         }
         
-        guard let data = bitmap.representation(using: imageFileType, properties: properties) else {
-            return false
+        // Add the image to the destination with our properties
+        CGImageDestinationAddImage(destination, cgImage, properties as CFDictionary)
+        
+        // Finalize and write
+        let success = CGImageDestinationFinalize(destination)
+        
+        if !success {
+            print("Failed to save image")
+            saveError = "Failed to save the image"
         }
         
-        // Write to file (security-scoped access already active from loadSavedBookmarks)
-        do {
-            try data.write(to: url, options: .atomic)
-            return true
-        } catch {
-            print("Failed to save image: \(error)")
-            saveError = error.localizedDescription
-            return false
-        }
+        return success
     }
     
     func setZoom(_ scale: CGFloat, at point: CGPoint? = nil, in viewSize: CGSize? = nil) {

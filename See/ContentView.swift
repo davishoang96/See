@@ -11,28 +11,38 @@ import AppKit
 struct ContentView: View {
     @StateObject private var viewModel = ImageViewModel()
     @AppStorage("showFilmstrip") private var showFilmstrip = true
+    @State private var showInfoSidebar = false
     
     var body: some View {
-        mainContent
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.black)
-            .clipped()
-            .focusable()
-            .focusEffectDisabled()
-            .modifier(KeyboardShortcutsModifier(viewModel: viewModel))
-            .onOpenURL { url in
-                viewModel.loadImageAndFolder(from: url)
+        HStack(spacing: 0) {
+            mainContent
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            
+            if showInfoSidebar {
+                InfoSidebarView(viewModel: viewModel)
+                    .frame(width: 300)
+                    .transition(.move(edge: .trailing))
             }
-            .toolbar { toolbarContent }
-            .toolbarRole(.automatic)
-            .persistentSystemOverlays(.hidden)
-            .alert("Save Error", isPresented: .constant(viewModel.saveError != nil)) {
-                Button("OK") {
-                    viewModel.saveError = nil
-                }
-            } message: {
-                Text(viewModel.saveError ?? "")
+        }
+        .background(Color.black)
+        .clipped()
+        .focusable()
+        .focusEffectDisabled()
+        .modifier(KeyboardShortcutsModifier(viewModel: viewModel))
+        .onOpenURL { url in
+            viewModel.loadImageAndFolder(from: url)
+        }
+        .toolbar { toolbarContent }
+        .toolbarRole(.automatic)
+        .persistentSystemOverlays(.hidden)
+        .alert("Save Error", isPresented: .constant(viewModel.saveError != nil)) {
+            Button("OK") {
+                viewModel.saveError = nil
             }
+        } message: {
+            Text(viewModel.saveError ?? "")
+        }
+        .animation(.easeInOut(duration: 0.2), value: showInfoSidebar)
     }
     
     private var mainContent: some View {
@@ -225,6 +235,16 @@ struct ContentView: View {
             }
             .disabled(viewModel.imageFiles.count <= 1)
             .help("Toggle filmstrip")
+        }
+        
+        ToolbarItem(placement: .automatic) {
+            Button(action: {
+                showInfoSidebar.toggle()
+            }) {
+                Label("Info", systemImage: "info.circle")
+            }
+            .disabled(viewModel.currentImage == nil)
+            .help("Show image information")
         }
     }
     
@@ -456,6 +476,82 @@ struct ZoomableImageView: View {
                 isDragging = false
                 lastOffset = viewModel.imageOffset
             }
+    }
+}
+
+struct InfoSidebarView: View {
+    @ObservedObject var viewModel: ImageViewModel
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header
+            HStack {
+                Text("Image Information")
+                    .font(.headline)
+                    .foregroundColor(.white)
+                Spacer()
+            }
+            .padding()
+            .background(Color(white: 0.15))
+            
+            // EXIF Data
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    if viewModel.exifData.isEmpty {
+                        Text("No metadata available")
+                            .foregroundColor(.secondary)
+                            .padding()
+                    } else {
+                        ForEach(sortedExifData, id: \.key) { item in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(item.key)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Text(item.value)
+                                    .font(.system(.body, design: .monospaced))
+                                    .foregroundColor(.white)
+                                    .textSelection(.enabled)
+                            }
+                            .padding(.horizontal)
+                            .padding(.vertical, 8)
+                            
+                            Divider()
+                                .background(Color.gray.opacity(0.3))
+                        }
+                    }
+                }
+            }
+            .background(Color(white: 0.1))
+        }
+        .background(Color(white: 0.1))
+    }
+    
+    private var sortedExifData: [(key: String, value: String)] {
+        // Define the order we want to display items
+        let order = [
+            "Dimensions", "File Size", "File Type", "Date Taken",
+            "Camera Make", "Camera Model", "Camera",
+            "Focal Length", "Aperture", "Shutter Speed", "ISO", "Flash",
+            "DPI", "Color Model", "Depth", "GPS"
+        ]
+        
+        var sorted: [(key: String, value: String)] = []
+        
+        // Add items in the specified order
+        for key in order {
+            if let value = viewModel.exifData[key] {
+                sorted.append((key: key, value: value))
+            }
+        }
+        
+        // Add any remaining items not in the order list
+        for (key, value) in viewModel.exifData {
+            if !order.contains(key) {
+                sorted.append((key: key, value: value))
+            }
+        }
+        
+        return sorted
     }
 }
 
