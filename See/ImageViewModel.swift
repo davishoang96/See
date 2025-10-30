@@ -16,11 +16,19 @@ class ImageViewModel: ObservableObject {
     @Published var imageFiles: [URL] = []
     @Published var currentIndex: Int = 0
     @Published var thumbnails: [URL: NSImage] = [:]
+    @Published var zoomScale: CGFloat = 1.0
+    @Published var imageOffset: CGSize = .zero
+    
+    var mouseLocation: CGPoint = .zero
+    var viewSize: CGSize = .zero
     
     private let supportedImageExtensions = ["jpg", "jpeg", "png", "gif", "bmp", "tiff", "tif", "heic", "webp"]
     private let thumbnailSize = NSSize(width: 64, height: 64)
     private let bookmarksKey = "FolderBookmarks"
     private var accessedFolders: [URL] = []
+    private let minZoomScale: CGFloat = 0.1
+    private let maxZoomScale: CGFloat = 10.0
+    private let zoomStep: CGFloat = 0.2
     
     init() {
         loadSavedBookmarks()
@@ -299,6 +307,89 @@ class ImageViewModel: ObservableObject {
         let url = imageFiles[currentIndex]
         currentImagePath = url
         currentImage = NSImage(contentsOf: url)
+        resetZoom()
+    }
+    
+    // MARK: - Zoom Methods
+    
+    func zoomIn(at point: CGPoint? = nil, in viewSize: CGSize? = nil) {
+        let oldScale = zoomScale
+        let newScale = min(zoomScale + zoomStep, maxZoomScale)
+        zoomScale = newScale
+        
+        if let point = point, let viewSize = viewSize {
+            adjustOffset(for: point, in: viewSize, oldScale: oldScale, newScale: newScale)
+        } else {
+            // Zoom to center - scale the offset proportionally
+            adjustOffsetForCenterZoom(oldScale: oldScale, newScale: newScale)
+        }
+    }
+    
+    func zoomOut(at point: CGPoint? = nil, in viewSize: CGSize? = nil) {
+        let oldScale = zoomScale
+        let newScale = max(zoomScale - zoomStep, minZoomScale)
+        zoomScale = newScale
+        
+        if newScale <= 1.0 {
+            resetZoom()
+        } else if let point = point, let viewSize = viewSize {
+            adjustOffset(for: point, in: viewSize, oldScale: oldScale, newScale: newScale)
+        } else {
+            // Zoom to center - scale the offset proportionally
+            adjustOffsetForCenterZoom(oldScale: oldScale, newScale: newScale)
+        }
+    }
+    
+    func resetZoom() {
+        zoomScale = 1.0
+        imageOffset = .zero
+    }
+    
+    func setZoom(_ scale: CGFloat, at point: CGPoint? = nil, in viewSize: CGSize? = nil) {
+        let oldScale = zoomScale
+        let newScale = max(minZoomScale, min(scale, maxZoomScale))
+        zoomScale = newScale
+        
+        if zoomScale <= 1.0 {
+            resetZoom()
+        } else if let point = point, let viewSize = viewSize {
+            adjustOffset(for: point, in: viewSize, oldScale: oldScale, newScale: newScale)
+        } else if oldScale != newScale {
+            // Zoom to center - scale the offset proportionally
+            adjustOffsetForCenterZoom(oldScale: oldScale, newScale: newScale)
+        }
+    }
+    
+    func updateOffset(_ offset: CGSize) {
+        imageOffset = offset
+    }
+    
+    private func adjustOffset(for point: CGPoint, in viewSize: CGSize, oldScale: CGFloat, newScale: CGFloat) {
+        // Calculate the center of the view
+        let centerX = viewSize.width / 2
+        let centerY = viewSize.height / 2
+        
+        // Calculate the position of the mouse relative to the current offset and zoom
+        // This gives us the "image coordinate" under the mouse
+        let imageX = (point.x - centerX - imageOffset.width) / oldScale
+        let imageY = (point.y - centerY - imageOffset.height) / oldScale
+        
+        // Now calculate what offset we need to keep that same image coordinate
+        // at the same screen position with the new zoom level
+        let newOffsetX = point.x - centerX - imageX * newScale
+        let newOffsetY = point.y - centerY - imageY * newScale
+        
+        imageOffset = CGSize(width: newOffsetX, height: newOffsetY)
+    }
+    
+    private func adjustOffsetForCenterZoom(oldScale: CGFloat, newScale: CGFloat) {
+        // When zooming to center, scale the offset proportionally
+        // This keeps the center of the image at the center of the view
+        let scaleRatio = newScale / oldScale
+        imageOffset = CGSize(
+            width: imageOffset.width * scaleRatio,
+            height: imageOffset.height * scaleRatio
+        )
     }
     
     var currentFileName: String {

@@ -15,10 +15,29 @@ A minimalist, fast image viewer for macOS with an elegant AMOLED black interface
   - `←` / `→` - Navigate between images
   - `⌘O` - Open image file
   - `⌘⇧O` - Open folder
+  - `⌘+` / `⌘=` - Zoom in
+  - `⌘-` - Zoom out
+  - `⌘0` - Reset zoom to 100%
 - **Filmstrip View** - Visual thumbnail strip at bottom for quick image selection
   - Click thumbnails to jump to any image
   - Toggle visibility with toolbar button
   - Preference saved across sessions
+
+### Zoom & Pan
+- **Zoom Controls** - Zoom from 10% to 1000% (10x magnification)
+  - Toolbar buttons for zoom in/out/reset
+  - Keyboard shortcuts (⌘+, ⌘-, ⌘0)
+  - Pinch gesture on trackpad to zoom
+  - **Double-click** to progressively zoom in (2x each click: 100% → 200% → 400% → 800%)
+  - Drag to pan when zoomed beyond 100%
+- **Zoom to Cursor** - Intelligent zoom behavior
+  - Toolbar buttons & keyboard shortcuts: Zoom to center (keeps image centered)
+  - Trackpad pinch & double-click: Zooms towards cursor position
+  - Natural and intuitive for both mouse and trackpad users
+- **Smart Zoom** - Automatically resets to 100% when:
+  - Switching to a different image
+  - Zooming out below 100%
+  - Pressing reset zoom (⌘0)
 
 ### Smart Folder Access
 - **Persistent Permissions** - Grant folder access once, use forever
