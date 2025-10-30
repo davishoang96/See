@@ -18,6 +18,8 @@ A minimalist, fast image viewer for macOS with an elegant AMOLED black interface
   - `⌘+` / `⌘=` - Zoom in
   - `⌘-` - Zoom out
   - `⌘0` - Reset zoom to 100%
+  - `⌘[` - Rotate left 90°
+  - `⌘]` - Rotate right 90°
 - **Filmstrip View** - Visual thumbnail strip at bottom for quick image selection
   - Click thumbnails to jump to any image
   - Toggle visibility with toolbar button
@@ -38,6 +40,13 @@ A minimalist, fast image viewer for macOS with an elegant AMOLED black interface
   - Switching to a different image
   - Zooming out below 100%
   - Pressing reset zoom (⌘0)
+
+### Rotation
+- **Rotate Image** - Rotate images in 90° increments
+  - Toolbar buttons for rotate left/right
+  - Keyboard shortcuts (⌘[, ⌘])
+  - Smooth animated rotation
+  - Automatically resets when switching images
 
 ### Smart Folder Access
 - **Persistent Permissions** - Grant folder access once, use forever

@@ -18,6 +18,7 @@ class ImageViewModel: ObservableObject {
     @Published var thumbnails: [URL: NSImage] = [:]
     @Published var zoomScale: CGFloat = 1.0
     @Published var imageOffset: CGSize = .zero
+    @Published var rotationAngle: Angle = .zero
     
     var mouseLocation: CGPoint = .zero
     var viewSize: CGSize = .zero
@@ -308,6 +309,7 @@ class ImageViewModel: ObservableObject {
         currentImagePath = url
         currentImage = NSImage(contentsOf: url)
         resetZoom()
+        resetRotation()
     }
     
     // MARK: - Zoom Methods
@@ -343,6 +345,20 @@ class ImageViewModel: ObservableObject {
     func resetZoom() {
         zoomScale = 1.0
         imageOffset = .zero
+    }
+    
+    // MARK: - Rotation Methods
+    
+    func rotateLeft() {
+        rotationAngle -= .degrees(90)
+    }
+    
+    func rotateRight() {
+        rotationAngle += .degrees(90)
+    }
+    
+    func resetRotation() {
+        rotationAngle = .zero
     }
     
     func setZoom(_ scale: CGFloat, at point: CGPoint? = nil, in viewSize: CGSize? = nil) {

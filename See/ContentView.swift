@@ -16,7 +16,6 @@ struct ContentView: View {
         mainContent
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color.black)
-            .background(ignoresSafeAreaEdges: .all)
             .clipped()
             .focusable()
             .focusEffectDisabled()
@@ -34,6 +33,7 @@ struct ContentView: View {
             imageArea
             filmstripArea
         }
+        .animation(.spring(response: 0.3), value: showFilmstrip)
     }
     
     private var imageArea: some View {
@@ -103,71 +103,97 @@ struct ContentView: View {
             titleView
         }
         
-        ToolbarItem(placement: .navigation) {
-            Button(action: { viewModel.openImage() }) {
-                Label("Open Image", systemImage: "photo")
-            }
-            .help("Open an image (⌘O)")
-        }
-        
-        ToolbarItem(placement: .navigation) {
-            Button(action: { viewModel.openFolder() }) {
-                Label("Open Folder", systemImage: "folder")
-            }
-            .help("Open a folder (⌘⇧O)")
-        }
-        
-        ToolbarItem(placement: .navigation) {
-            Button(action: { viewModel.previousImage() }) {
-                Label("Previous", systemImage: "chevron.left")
-            }
-            .disabled(viewModel.imageFiles.isEmpty)
-            .help("Previous image (←)")
-        }
-        
-        ToolbarItem(placement: .navigation) {
-            Button(action: { viewModel.nextImage() }) {
-                Label("Next", systemImage: "chevron.right")
-            }
-            .disabled(viewModel.imageFiles.isEmpty)
-            .help("Next image (→)")
-        }
-        
-        ToolbarItem(placement: .automatic) {
-            Button(action: { 
-                viewModel.zoomOut()
-            }) {
-                Label("Zoom Out", systemImage: "minus.magnifyingglass")
-            }
-            .disabled(viewModel.currentImage == nil)
-            .help("Zoom out (⌘-)")
-        }
-        
-        ToolbarItem(placement: .automatic) {
-            Button(action: { viewModel.resetZoom() }) {
-                Label("Reset Zoom", systemImage: "1.magnifyingglass")
-            }
-            .disabled(viewModel.currentImage == nil || viewModel.zoomScale == 1.0)
-            .help("Reset zoom (⌘0)")
-        }
-        
-        ToolbarItem(placement: .automatic) {
-            Button(action: { 
-                viewModel.zoomIn()
-            }) {
-                Label("Zoom In", systemImage: "plus.magnifyingglass")
-            }
-            .disabled(viewModel.currentImage == nil)
-            .help("Zoom in (⌘+)")
-        }
-        
-        ToolbarItem(placement: .automatic) {
-            Button(action: { 
-                withAnimation(.spring(response: 0.3)) {
-                    showFilmstrip.toggle()
+        Group {
+            ToolbarItem(placement: .navigation) {
+                Button(action: { viewModel.openImage() }) {
+                    Label("Open Image", systemImage: "photo")
                 }
+                .help("Open an image (⌘O)")
+            }
+            
+            ToolbarItem(placement: .navigation) {
+                Button(action: { viewModel.openFolder() }) {
+                    Label("Open Folder", systemImage: "folder")
+                }
+                .help("Open a folder (⌘⇧O)")
+            }
+        }
+        
+        Group {
+            ToolbarItem(placement: .navigation) {
+                Button(action: { viewModel.previousImage() }) {
+                    Label("Previous", systemImage: "chevron.left")
+                }
+                .disabled(viewModel.imageFiles.isEmpty)
+                .help("Previous image (←)")
+            }
+            
+            ToolbarItem(placement: .navigation) {
+                Button(action: { viewModel.nextImage() }) {
+                    Label("Next", systemImage: "chevron.right")
+                }
+                .disabled(viewModel.imageFiles.isEmpty)
+                .help("Next image (→)")
+            }
+        }
+        
+        Group {
+            ToolbarItem(placement: .automatic) {
+                Button(action: {
+                    viewModel.zoomOut()
+                }) {
+                    Label("Zoom Out", systemImage: "minus.magnifyingglass")
+                }
+                .disabled(viewModel.currentImage == nil)
+                .help("Zoom out (⌘-)")
+            }
+            
+            ToolbarItem(placement: .automatic) {
+                Button(action: { viewModel.resetZoom() }) {
+                    Label("Reset Zoom", systemImage: "1.magnifyingglass")
+                }
+                .disabled(viewModel.currentImage == nil || viewModel.zoomScale == 1.0)
+                .help("Reset zoom (⌘0)")
+            }
+            
+            ToolbarItem(placement: .automatic) {
+                Button(action: {
+                    viewModel.zoomIn()
+                }) {
+                    Label("Zoom In", systemImage: "plus.magnifyingglass")
+                }
+                .disabled(viewModel.currentImage == nil)
+                .help("Zoom in (⌘+)")
+            }
+        }
+        
+        Group {
+            ToolbarItem(placement: .automatic) {
+                Button(action: {
+                    viewModel.rotateLeft()
+                }) {
+                    Label("Rotate Left", systemImage: "rotate.left")
+                }
+                .disabled(viewModel.currentImage == nil)
+                .help("Rotate left 90° (⌘[)")
+            }
+            
+            ToolbarItem(placement: .automatic) {
+                Button(action: {
+                    viewModel.rotateRight()
+                }) {
+                    Label("Rotate Right", systemImage: "rotate.right")
+                }
+                .disabled(viewModel.currentImage == nil)
+                .help("Rotate right 90° (⌘])")
+            }
+        }
+    
+        ToolbarItem(placement: .automatic) {
+            Button(action: {
+                showFilmstrip.toggle()
             }) {
-                Label(showFilmstrip ? "Hide Filmstrip" : "Show Filmstrip", 
+                Label(showFilmstrip ? "Hide Filmstrip" : "Show Filmstrip",
                       systemImage: showFilmstrip ? "photo.stack" : "photo.stack.fill")
             }
             .disabled(viewModel.imageFiles.count <= 1)
@@ -222,6 +248,20 @@ struct KeyboardShortcutsModifier: ViewModifier {
             .onKeyPress(characters: .init(charactersIn: "0")) { press in
                 if press.modifiers.contains(.command) {
                     viewModel.resetZoom()
+                    return .handled
+                }
+                return .ignored
+            }
+            .onKeyPress(characters: .init(charactersIn: "[")) { press in
+                if press.modifiers.contains(.command) {
+                    viewModel.rotateLeft()
+                    return .handled
+                }
+                return .ignored
+            }
+            .onKeyPress(characters: .init(charactersIn: "]")) { press in
+                if press.modifiers.contains(.command) {
+                    viewModel.rotateRight()
                     return .handled
                 }
                 return .ignored
@@ -308,6 +348,8 @@ struct ZoomableImageView: View {
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .frame(width: geometry.size.width, height: geometry.size.height)
+                .rotationEffect(viewModel.rotationAngle)
+                .animation(.easeInOut(duration: 0.3), value: viewModel.rotationAngle)
                 .scaleEffect(viewModel.zoomScale)
                 .offset(viewModel.imageOffset)
                 .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
