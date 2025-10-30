@@ -21,6 +21,7 @@ A minimalist, fast image viewer for macOS with an elegant AMOLED black interface
   - `⌘[` - Rotate left 90°
   - `⌘]` - Rotate right 90°
   - `⌘S` - Save rotated image
+  - `⌘⌫` - Move image to Trash
 - **Filmstrip View** - Visual thumbnail strip at bottom for quick image selection
   - Click thumbnails to jump to any image
   - Toggle visibility with toolbar button
@@ -53,7 +54,13 @@ A minimalist, fast image viewer for macOS with an elegant AMOLED black interface
   - Keyboard shortcut (⌘S)
   - Only enabled when rotation is applied
   - Preserves original image format (JPEG, PNG, etc.)
-  - Auto-reloads image after saving
+  - Auto-reloads image and updates thumbnail after saving
+- **Delete Image** - Move images to Trash
+  - Click the delete button in toolbar
+  - Keyboard shortcut (⌘⌫)
+  - Confirmation dialog before deletion
+  - Auto-navigates to next/previous image
+  - Removes from filmstrip immediately
 
 ### Smart Folder Access
 - **Persistent Permissions** - Grant folder access once, use forever

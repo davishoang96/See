@@ -366,6 +366,64 @@ class ImageViewModel: ObservableObject {
         rotationAngle = .zero
     }
     
+    // MARK: - Delete Methods
+    
+    func deleteCurrentImage() {
+        guard let imagePath = currentImagePath,
+              !imageFiles.isEmpty else {
+            saveError = "No image to delete"
+            return
+        }
+        
+        // Show confirmation dialog
+        let alert = NSAlert()
+        alert.messageText = "Delete Image?"
+        alert.informativeText = "Are you sure you want to move \"\(imagePath.lastPathComponent)\" to the Trash? This action cannot be undone."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        
+        let response = alert.runModal()
+        
+        if response == .alertFirstButtonReturn {
+            performDelete(at: imagePath)
+        }
+    }
+    
+    private func performDelete(at url: URL) {
+        do {
+            // Move to trash
+            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+            
+            // Remove from our arrays
+            if let index = imageFiles.firstIndex(of: url) {
+                imageFiles.remove(at: index)
+                thumbnails.removeValue(forKey: url)
+                
+                // Navigate to next image or previous if at the end
+                if imageFiles.isEmpty {
+                    // No more images
+                    currentImage = nil
+                    currentImagePath = nil
+                    currentIndex = 0
+                } else {
+                    // Adjust index if we deleted the last image
+                    if index >= imageFiles.count {
+                        currentIndex = imageFiles.count - 1
+                    } else {
+                        currentIndex = index
+                    }
+                    loadCurrentImage()
+                }
+            }
+            
+            saveError = nil
+        } catch {
+            print("Failed to delete image: \(error)")
+            saveError = "Failed to delete the image: \(error.localizedDescription)"
+        }
+    }
+    
     // MARK: - Save Methods
     
     func saveImage() {
@@ -432,8 +490,24 @@ class ImageViewModel: ObservableObject {
             saveError = nil
             // Reload the image to show the saved version
             loadCurrentImage()
+            // Update the thumbnail for this image
+            updateThumbnail(for: url)
         } else {
             saveError = "Failed to save the image. Please check file permissions."
+        }
+    }
+    
+    private func updateThumbnail(for url: URL) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            
+            if let image = NSImage(contentsOf: url) {
+                let thumbnail = self.createThumbnail(from: image)
+                
+                DispatchQueue.main.async {
+                    self.thumbnails[url] = thumbnail
+                }
+            }
         }
     }
     

@@ -205,6 +205,16 @@ struct ContentView: View {
             .disabled(viewModel.currentImage == nil || viewModel.rotationAngle.degrees == 0)
             .help("Save rotated image (⌘S)")
         }
+        
+        ToolbarItem(placement: .automatic) {
+            Button(role: .destructive, action: {
+                viewModel.deleteCurrentImage()
+            }) {
+                Label("Delete", systemImage: "trash")
+            }
+            .disabled(viewModel.currentImage == nil)
+            .help("Move to Trash (⌘⌫)")
+        }
     
         ToolbarItem(placement: .automatic) {
             Button(action: {
@@ -286,6 +296,14 @@ struct KeyboardShortcutsModifier: ViewModifier {
             .onKeyPress(characters: .init(charactersIn: "sS")) { press in
                 if press.modifiers.contains(.command) {
                     viewModel.saveImage()
+                    return .handled
+                }
+                return .ignored
+            }
+            .onKeyPress { press in
+                // Check for Command+Delete (Unicode character for delete is U+007F)
+                if press.characters == "\u{7F}" && press.modifiers.contains(.command) {
+                    viewModel.deleteCurrentImage()
                     return .handled
                 }
                 return .ignored
