@@ -301,55 +301,6 @@ class ImageViewModel: ObservableObject {
         currentImage = NSImage(contentsOf: url)
     }
     
-    private func resizeWindowToFitImage() {
-        guard let image = currentImage,
-              let screen = NSScreen.main else { return }
-        
-        let screenFrame = screen.visibleFrame
-        let imageSize = image.size
-        let aspectRatio = imageSize.width / imageSize.height
-        
-        // Account for toolbar (~52px) and filmstrip (~100px if visible)
-        let toolbarHeight: CGFloat = 52
-        let filmstripHeight: CGFloat = imageFiles.count > 1 ? 100 : 0
-        let chromeHeight = toolbarHeight + filmstripHeight
-        
-        // Calculate available space
-        let maxHeight = (screenFrame.height * 0.9) - chromeHeight
-        let maxWidth = screenFrame.width * 0.9
-        
-        var contentWidth: CGFloat
-        var contentHeight: CGFloat
-        
-        // Determine scaling based on which dimension is the limiting factor
-        if imageSize.width / maxWidth > imageSize.height / maxHeight {
-            // Width is the limiting factor
-            contentWidth = maxWidth
-            contentHeight = contentWidth / aspectRatio
-        } else {
-            // Height is the limiting factor
-            contentHeight = maxHeight
-            contentWidth = contentHeight * aspectRatio
-        }
-        
-        // Total window size includes chrome
-        let totalWidth = contentWidth
-        let totalHeight = contentHeight + chromeHeight
-        
-        // Calculate center position
-        let newOriginX = screenFrame.origin.x + (screenFrame.width - totalWidth) / 2
-        let newOriginY = screenFrame.origin.y + (screenFrame.height - totalHeight) / 2
-        
-        let newFrame = NSRect(x: newOriginX, y: newOriginY, width: totalWidth, height: totalHeight)
-        
-        // Find the main window and resize it
-        DispatchQueue.main.async {
-            if let window = NSApp.windows.first(where: { $0.isKeyWindow }) {
-                window.setFrame(newFrame, display: true, animate: true)
-            }
-        }
-    }
-    
     var currentFileName: String {
         currentImagePath?.lastPathComponent ?? "No image loaded"
     }

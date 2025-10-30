@@ -10,7 +10,6 @@ import AppKit
 
 struct ContentView: View {
     @StateObject private var viewModel = ImageViewModel()
-    @State private var isHoveringOverImage = false
     @AppStorage("showFilmstrip") private var showFilmstrip = true
     
     var body: some View {
