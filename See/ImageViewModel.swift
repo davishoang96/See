@@ -202,13 +202,9 @@ class ImageViewModel: ObservableObject {
                 options: [.skipsHiddenFiles]
             )
             
-            // Filter for valid image files only
+            // Filter by supported extension and quickly validate the file isn't corrupted
             imageFiles = contents.filter { url in
-                guard let ext = url.pathExtension.lowercased() as String? else { return false }
-                guard supportedImageExtensions.contains(ext) else { return false }
-                
-                // Verify the image can actually be loaded
-                return loadImageWithCorrectOrientation(from: url) != nil
+                return isValidImageFile(url)
             }.sorted { $0.lastPathComponent < $1.lastPathComponent }
             
             // Find the index of the selected file, or default to first image
@@ -243,13 +239,17 @@ class ImageViewModel: ObservableObject {
             guard let self = self else { return }
             
             for url in self.imageFiles {
-                if let image = self.loadImageWithCorrectOrientation(from: url) {
-                    let thumbnail = self.createThumbnail(from: image)
-                    
-                    DispatchQueue.main.async {
-                        self.thumbnails[url] = thumbnail
+                // Skip files not supported by the app
+                let ext = url.pathExtension.lowercased()
+                guard self.supportedImageExtensions.contains(ext) else { continue }
+
+                autoreleasepool(invoking: {
+                    if let thumbnail = self.loadThumbnail(for: url) {
+                        DispatchQueue.main.async {
+                            self.thumbnails[url] = thumbnail
+                        }
                     }
-                }
+                })
             }
         }
     }
@@ -313,12 +313,29 @@ class ImageViewModel: ObservableObject {
         
         let url = imageFiles[currentIndex]
         currentImagePath = url
-        currentImage = loadImageWithCorrectOrientation(from: url)
-        extractEXIFData(from: url)
-        resetZoom()
-        resetRotation()
+        
+        // Decode off the main thread to keep UI responsive
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            let image = self.loadImageWithCorrectOrientation(from: url)
+            DispatchQueue.main.async {
+                // Only apply if still on same image
+                if self.currentImagePath == url {
+                    self.currentImage = image
+                    self.resetZoom()
+                    self.resetRotation()
+                }
+            }
+        }
     }
     
+    func refreshEXIF() {
+        guard let url = currentImagePath else { return }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            self?.extractEXIFData(from: url)
+        }
+    }
+
     private func extractEXIFData(from url: URL) {
         guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil) else {
             exifData = [:]
@@ -417,46 +434,38 @@ class ImageViewModel: ObservableObject {
             }
         }
         
-        exifData = metadata
+        DispatchQueue.main.async { [weak self] in
+            self?.exifData = metadata
+        }
     }
     
     private func loadImageWithCorrectOrientation(from url: URL) -> NSImage? {
-        // Load image with EXIF orientation properly applied to pixels
-        // This ensures the image appears correctly oriented, and any EXIF rotation
-        // is baked into the pixel data
+        // Decode a display-sized thumbnail with EXIF orientation applied
         guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil) else {
-            return NSImage(contentsOf: url) // Fallback to default loading
+            return NSImage(contentsOf: url)
         }
-        
-        // Get image properties to determine max size
-        guard let properties = CGImageSourceCopyPropertiesAtIndex(imageSource, 0, nil) as? [CFString: Any] else {
-            return NSImage(contentsOf: url) // Fallback
-        }
-        
-        let maxPixelSize = max(
-            (properties[kCGImagePropertyPixelWidth] as? Int) ?? 8000,
-            (properties[kCGImagePropertyPixelHeight] as? Int) ?? 8000
-        )
-        
-        // Create image with orientation transformation applied
-        // kCGImageSourceCreateThumbnailWithTransform applies EXIF orientation to the pixels
+
+        // Choose a reasonable upper bound for decode size to speed up loads
+        // Use screen scale to keep quality high without decoding huge originals
+        let screenScale = NSScreen.main?.backingScaleFactor ?? 2.0
+        let base: CGFloat = 2000 // base logical points
+        let maxPixelSize = Int(base * screenScale) // e.g., ~4000px on Retina
+
         let options: [CFString: Any] = [
-            kCGImageSourceShouldCache: true,
+            kCGImageSourceShouldCache: false,
             kCGImageSourceShouldAllowFloat: true,
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,  // This applies EXIF orientation
+            kCGImageSourceCreateThumbnailFromImageIfAbsent: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
             kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
         ]
-        
+
         guard let cgImage = CGImageSourceCreateThumbnailAtIndex(imageSource, 0, options as CFDictionary) else {
-            return NSImage(contentsOf: url) // Fallback
+            return NSImage(contentsOf: url)
         }
-        
-        // Create NSImage from properly oriented CGImage (EXIF rotation now baked into pixels)
+
         let size = NSSize(width: cgImage.width, height: cgImage.height)
         let image = NSImage(size: size)
         image.addRepresentation(NSBitmapImageRep(cgImage: cgImage))
-        
         return image
     }
     
@@ -644,15 +653,73 @@ class ImageViewModel: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
             
-            if let image = self.loadImageWithCorrectOrientation(from: url) {
-                let thumbnail = self.createThumbnail(from: image)
-                
-                DispatchQueue.main.async {
-                    self.thumbnails[url] = thumbnail
+            // Skip files not supported by the app
+            let ext = url.pathExtension.lowercased()
+            guard self.supportedImageExtensions.contains(ext) else { return }
+
+            autoreleasepool(invoking: {
+                if let thumbnail = self.loadThumbnail(for: url) {
+                    DispatchQueue.main.async {
+                        self.thumbnails[url] = thumbnail
+                    }
                 }
-            }
+            })
         }
     }
+
+    // Decode a fast, small thumbnail using CGImageSource without loading full image
+    private func loadThumbnail(for url: URL) -> NSImage? {
+        guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil) else {
+            return nil
+        }
+
+        // If the primary image index can't be read cleanly, treat as corrupted and skip
+        let status = CGImageSourceGetStatusAtIndex(imageSource, 0)
+        guard status == .statusComplete else {
+            return nil
+        }
+
+        let scale = NSScreen.main?.backingScaleFactor ?? 2.0
+        let maxSide = max(thumbnailSize.width, thumbnailSize.height)
+        let maxPixel = Int(maxSide * scale)
+
+        let options: [CFString: Any] = [
+            kCGImageSourceShouldCache: false,
+            kCGImageSourceCreateThumbnailFromImageIfAbsent: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixel
+        ]
+
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(imageSource, 0, options as CFDictionary) else {
+            return nil
+        }
+
+        let size = NSSize(width: cgImage.width, height: cgImage.height)
+        let image = NSImage(size: size)
+        image.addRepresentation(NSBitmapImageRep(cgImage: cgImage))
+
+        // Finally crop/fit to our square thumbnail canvas
+        return createThumbnail(from: image)
+    }
+    
+    // Fast validity check that avoids full decode
+    private func isValidImageFile(_ url: URL) -> Bool {
+        let ext = url.pathExtension.lowercased()
+        guard supportedImageExtensions.contains(ext) else { return false }
+        guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil) else { return false }
+        let status = CGImageSourceGetStatusAtIndex(imageSource, 0)
+        guard status == .statusComplete else { return false }
+        // Try to create a tiny thumbnail to ensure decodability
+        let options: [CFString: Any] = [
+            kCGImageSourceShouldCache: false,
+            kCGImageSourceCreateThumbnailFromImageIfAbsent: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: 64
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(imageSource, 0, options as CFDictionary) != nil
+    }
+
+    // No placeholder; failed thumbnails are simply omitted
     
     private func rotateImage(_ image: NSImage, by degrees: Double) -> NSImage {
         // Normalize the angle to 0, 90, 180, or 270

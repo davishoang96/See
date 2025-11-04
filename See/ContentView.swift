@@ -43,6 +43,11 @@ struct ContentView: View {
             Text(viewModel.saveError ?? "")
         }
         .animation(.easeInOut(duration: 0.2), value: showInfoSidebar)
+        .onChange(of: showInfoSidebar) { newValue in
+            if newValue {
+                viewModel.refreshEXIF()
+            }
+        }
     }
     
     private var mainContent: some View {
@@ -338,14 +343,18 @@ struct FilmstripView: View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    ForEach(Array(viewModel.imageFiles.enumerated()), id: \.offset) { index, url in
+                    // Only display files that have a generated thumbnail
+                    let displayUrls = viewModel.imageFiles.filter { viewModel.thumbnails[$0] != nil }
+                    ForEach(Array(displayUrls.enumerated()), id: \.offset) { index, url in
                         ThumbnailView(
                             url: url,
                             thumbnail: viewModel.thumbnails[url],
-                            isSelected: index == viewModel.currentIndex
+                            isSelected: url == viewModel.currentImagePath
                         )
                         .onTapGesture {
-                            viewModel.selectImage(at: index)
+                            if let originalIndex = viewModel.imageFiles.firstIndex(of: url) {
+                                viewModel.selectImage(at: originalIndex)
+                            }
                         }
                         .id(index)
                     }
