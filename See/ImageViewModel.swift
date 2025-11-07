@@ -150,14 +150,16 @@ class ImageViewModel: ObservableObject {
         // Activate and focus the app
         NSApp.activate(ignoringOtherApps: true)
         
+        // Set path immediately and load image asynchronously
+        currentImagePath = url
+        loadImageAsync(from: url)
+        
         // Get the parent directory
         let directory = url.deletingLastPathComponent()
         
         // Check if we already have access to this folder
         if hasSavedAccess(to: directory) {
-            // We already have access, load the image and all images from folder
-            currentImagePath = url
-            currentImage = loadImageWithCorrectOrientation(from: url)
+            // We already have access, load all images from folder
             loadImagesFromDirectory(directory, selectedFile: url)
         } else {
             // Ask for explicit permission to access the folder first
@@ -176,16 +178,10 @@ class ImageViewModel: ObservableObject {
                     // Save the bookmark for future access
                     self.saveBookmark(for: folderURL)
                     
-                    // Now load the selected image
-                    self.currentImagePath = url
-                    self.currentImage = self.loadImageWithCorrectOrientation(from: url)
-                    
                     // Load all images from the directory
                     self.loadImagesFromDirectory(folderURL, selectedFile: url)
                 } else {
                     // User denied access, just show the single image
-                    self.currentImagePath = url
-                    self.currentImage = self.loadImageWithCorrectOrientation(from: url)
                     self.imageFiles = [url]
                     self.currentIndex = 0
                 }
@@ -193,63 +189,146 @@ class ImageViewModel: ObservableObject {
         }
     }
     
-    private func loadImagesFromDirectory(_ directory: URL, selectedFile: URL?) {
-        do {
-            let fileManager = FileManager.default
-            let contents = try fileManager.contentsOfDirectory(
-                at: directory,
-                includingPropertiesForKeys: [.isRegularFileKey],
-                options: [.skipsHiddenFiles]
-            )
-            
-            // Filter by supported extension and quickly validate the file isn't corrupted
-            imageFiles = contents.filter { url in
-                return isValidImageFile(url)
-            }.sorted { $0.lastPathComponent < $1.lastPathComponent }
-            
-            // Find the index of the selected file, or default to first image
-            if let selectedFile = selectedFile, let index = imageFiles.firstIndex(of: selectedFile) {
-                currentIndex = index
-            } else if !imageFiles.isEmpty {
-                currentIndex = 0
-                loadCurrentImage()
-                // Activate app when loading folder
-                DispatchQueue.main.async {
-                    NSApp.activate(ignoringOtherApps: true)
+    // Fast async image loading - never blocks main thread
+    private func loadImageAsync(from url: URL) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            let image = self.loadImageWithCorrectOrientation(from: url)
+            DispatchQueue.main.async {
+                // Only apply if still on same image
+                if self.currentImagePath == url {
+                    self.currentImage = image
+                    self.resetZoom()
+                    self.resetRotation()
                 }
-            }
-            
-            // Generate thumbnails in background
-            generateThumbnails()
-            
-        } catch {
-            print("Error loading directory contents: \(error)")
-            if let selectedFile = selectedFile {
-                imageFiles = [selectedFile]
-                currentIndex = 0
-            } else {
-                imageFiles = []
-                currentIndex = 0
             }
         }
     }
     
-    private func generateThumbnails() {
+    private func loadImagesFromDirectory(_ directory: URL, selectedFile: URL?) {
+        // Do file listing off main thread
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
             
-            for url in self.imageFiles {
-                // Skip files not supported by the app
+            do {
+                let fileManager = FileManager.default
+                let contents = try fileManager.contentsOfDirectory(
+                    at: directory,
+                    includingPropertiesForKeys: [.isRegularFileKey],
+                    options: [.skipsHiddenFiles]
+                )
+                
+                // Ultra-fast filter: just by extension
+                // Files from contentsOfDirectory already exist, no need to check
+                let extensionFiltered = contents.filter { url in
+                    let ext = url.pathExtension.lowercased()
+                    return self.supportedImageExtensions.contains(ext)
+                }
+                
+                // Immediately show the file list (no validation blocking)
+                // Broken files will be filtered out later during thumbnail generation
+                var sortedFiles = extensionFiltered.sorted { $0.lastPathComponent < $1.lastPathComponent }
+                
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    
+                    // Set files immediately for instant UI update
+                    self.imageFiles = sortedFiles
+                    
+                    // Find selected file index
+                    if let selectedFile = selectedFile, let index = sortedFiles.firstIndex(of: selectedFile) {
+                        self.currentIndex = index
+                        // Image already loading via loadImageAsync, no need to load again
+                    } else if !sortedFiles.isEmpty {
+                        self.currentIndex = 0
+                        // Load first image if no selection
+                        if self.currentImage == nil {
+                            self.loadCurrentImage()
+                        }
+                    }
+                }
+                
+                // Generate thumbnails in background
+                // This will also filter out any broken files
+                DispatchQueue.main.async {
+                    self.generateThumbnails()
+                }
+                
+            } catch {
+                print("Error loading directory contents: \(error)")
+                DispatchQueue.main.async {
+                    if let selectedFile = selectedFile {
+                        self.imageFiles = [selectedFile]
+                        self.currentIndex = 0
+                    } else {
+                        self.imageFiles = []
+                        self.currentIndex = 0
+                    }
+                }
+            }
+        }
+    }
+    
+    // Note: File validation removed from initial load for speed
+    // Broken files are filtered out during thumbnail generation instead
+    
+    private func generateThumbnails() {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self = self else { return }
+            
+            // Capture current file list to avoid race conditions
+            let filesToProcess = self.imageFiles
+            let brokenFiles = NSMutableArray()
+            let lock = NSLock()
+            
+            // Generate thumbnails in parallel
+            DispatchQueue.concurrentPerform(iterations: filesToProcess.count) { index in
+                let url = filesToProcess[index]
                 let ext = url.pathExtension.lowercased()
-                guard self.supportedImageExtensions.contains(ext) else { continue }
-
-                autoreleasepool(invoking: {
+                guard self.supportedImageExtensions.contains(ext) else { return }
+                
+                autoreleasepool {
+                    // Try to load thumbnail - this validates the file
                     if let thumbnail = self.loadThumbnail(for: url) {
+                        // Update thumbnail on main thread
                         DispatchQueue.main.async {
                             self.thumbnails[url] = thumbnail
                         }
+                    } else {
+                        // File is broken, mark for removal
+                        lock.lock()
+                        brokenFiles.add(url)
+                        lock.unlock()
                     }
-                })
+                }
+            }
+            
+            // Remove broken files on main thread (batch update for efficiency)
+            if brokenFiles.count > 0 {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    let broken = brokenFiles.compactMap { $0 as? URL }
+                    var updatedFiles = self.imageFiles
+                    var indexAdjustment = 0
+                    
+                    for brokenUrl in broken {
+                        if let index = updatedFiles.firstIndex(of: brokenUrl) {
+                            updatedFiles.remove(at: index)
+                            if index <= self.currentIndex {
+                                indexAdjustment += 1
+                            }
+                        }
+                    }
+                    
+                    if !broken.isEmpty {
+                        self.imageFiles = updatedFiles
+                        if self.currentIndex >= indexAdjustment {
+                            self.currentIndex -= indexAdjustment
+                        } else {
+                            self.currentIndex = 0
+                        }
+                    }
+                }
             }
         }
     }
@@ -440,22 +519,23 @@ class ImageViewModel: ObservableObject {
     }
     
     private func loadImageWithCorrectOrientation(from url: URL) -> NSImage? {
-        // Decode a display-sized thumbnail with EXIF orientation applied
+        // Fast path: decode directly without reading properties first
+        // This avoids double file opening which is slow
         guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil) else {
             return NSImage(contentsOf: url)
         }
 
-        // Choose a reasonable upper bound for decode size to speed up loads
-        // Use screen scale to keep quality high without decoding huge originals
+        // Use a smaller decode size for ultra-fast initial display
+        // Start with 800 logical points (1600px on Retina) - enough for most viewing
+        // This is much faster than decoding full resolution
         let screenScale = NSScreen.main?.backingScaleFactor ?? 2.0
-        let base: CGFloat = 2000 // base logical points
-        let maxPixelSize = Int(base * screenScale) // e.g., ~4000px on Retina
+        let maxPixelSize = Int(800 * screenScale) // ~1600px on Retina - very fast
 
         let options: [CFString: Any] = [
             kCGImageSourceShouldCache: false,
-            kCGImageSourceShouldAllowFloat: true,
+            kCGImageSourceShouldAllowFloat: false, // Disable float for faster decoding
             kCGImageSourceCreateThumbnailFromImageIfAbsent: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceCreateThumbnailWithTransform: true, // Apply EXIF orientation
             kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
         ]
 
@@ -702,13 +782,18 @@ class ImageViewModel: ObservableObject {
         return createThumbnail(from: image)
     }
     
-    // Fast validity check that avoids full decode
+    // Ultra-fast validity check - skip file opening entirely for speed
+    // Validation happens later during thumbnail generation
+    private func isValidImageFileFast(_ url: URL) -> Bool {
+        // No-op: validation deferred to thumbnail generation for speed
+        // This function is kept for API compatibility but not used anymore
+        return true
+    }
+    
+    // More thorough check (used when we need to ensure decodability)
     private func isValidImageFile(_ url: URL) -> Bool {
-        let ext = url.pathExtension.lowercased()
-        guard supportedImageExtensions.contains(ext) else { return false }
+        guard isValidImageFileFast(url) else { return false }
         guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil) else { return false }
-        let status = CGImageSourceGetStatusAtIndex(imageSource, 0)
-        guard status == .statusComplete else { return false }
         // Try to create a tiny thumbnail to ensure decodability
         let options: [CFString: Any] = [
             kCGImageSourceShouldCache: false,
