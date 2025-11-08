@@ -26,7 +26,11 @@ class ImageViewModel: ObservableObject {
     var viewSize: CGSize = .zero
     
     private let supportedImageExtensions = ["jpg", "jpeg", "png", "gif", "bmp", "tiff", "tif", "heic", "webp"]
-    private let thumbnailSize = NSSize(width: 64, height: 64)
+    private var thumbnailSize: NSSize {
+        let size = UserDefaults.standard.double(forKey: "thumbnailSize")
+        let dimension = size > 0 ? size : 64 // Default to 64 if not set
+        return NSSize(width: dimension, height: dimension)
+    }
     private let bookmarksKey = "FolderBookmarks"
     private var accessedFolders: [URL] = []
     private let minZoomScale: CGFloat = 0.1
@@ -271,6 +275,12 @@ class ImageViewModel: ObservableObject {
     
     // Note: File validation removed from initial load for speed
     // Broken files are filtered out during thumbnail generation instead
+    
+    func regenerateThumbnails() {
+        // Clear existing thumbnails and regenerate with new settings
+        thumbnails.removeAll()
+        generateThumbnails()
+    }
     
     private func generateThumbnails() {
         DispatchQueue.global(qos: .utility).async { [weak self] in
@@ -525,11 +535,11 @@ class ImageViewModel: ObservableObject {
             return NSImage(contentsOf: url)
         }
 
-        // Use a smaller decode size for ultra-fast initial display
-        // Start with 800 logical points (1600px on Retina) - enough for most viewing
-        // This is much faster than decoding full resolution
+        // Use decode quality from settings (defaults to 800 if not set)
+        let decodeQuality = UserDefaults.standard.double(forKey: "imageDecodeQuality")
+        let quality = decodeQuality > 0 ? decodeQuality : 800 // Default to 800 if not set
         let screenScale = NSScreen.main?.backingScaleFactor ?? 2.0
-        let maxPixelSize = Int(800 * screenScale) // ~1600px on Retina - very fast
+        let maxPixelSize = Int(quality * screenScale)
 
         let options: [CFString: Any] = [
             kCGImageSourceShouldCache: false,

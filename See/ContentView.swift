@@ -11,7 +11,11 @@ import AppKit
 struct ContentView: View {
     @StateObject private var viewModel = ImageViewModel()
     @AppStorage("showFilmstrip") private var showFilmstrip = true
+    @AppStorage("thumbnailSize") private var thumbnailSize: Double = 64
+    @AppStorage("fitWindowToImage") private var fitWindowToImage: Bool = false
+    @AppStorage("maximizeWindowOnOpen") private var maximizeWindowOnOpen: Bool = false
     @State private var showInfoSidebar = false
+    @State private var showSettings = false
     
     var body: some View {
         HStack(spacing: 0) {
@@ -46,6 +50,131 @@ struct ContentView: View {
         .onChange(of: showInfoSidebar) { newValue in
             if newValue {
                 viewModel.refreshEXIF()
+            }
+        }
+        .onChange(of: thumbnailSize) { _ in
+            // Regenerate thumbnails when size changes
+            viewModel.regenerateThumbnails()
+        }
+        .onChange(of: viewModel.currentImage) { _ in
+            // Fit window to image if setting is enabled
+            applyWindowPreference()
+        }
+        .onChange(of: fitWindowToImage) { enabled in
+            // Fit window when setting is toggled
+            if enabled {
+                applyWindowPreference()
+            }
+        }
+        .onChange(of: showFilmstrip) { _ in
+            // Refit window when filmstrip visibility changes
+            applyWindowPreference()
+        }
+        .onChange(of: showInfoSidebar) { _ in
+            // Refit window when sidebar visibility changes
+            applyWindowPreference()
+        }
+        .onChange(of: maximizeWindowOnOpen) { _ in
+            applyWindowPreference()
+        }
+        .background(WindowAccessor())
+        .sheet(isPresented: $showSettings) {
+            SettingsView()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("OpenSettings"))) { _ in
+            showSettings = true
+        }
+    }
+    
+    private func applyWindowPreference() {
+        guard let image = viewModel.currentImage else { return }
+        if maximizeWindowOnOpen {
+            maximizeWindow()
+        } else if fitWindowToImage {
+            fitWindowToImageSize(image, showFilmstrip: showFilmstrip, showInfoSidebar: showInfoSidebar, thumbnailSize: thumbnailSize)
+        }
+    }
+
+    private func maximizeWindow() {
+        DispatchQueue.main.async {
+            guard let window = NSApplication.shared.windows.first(where: { $0.isKeyWindow || $0.isMainWindow }) ?? NSApplication.shared.windows.first else {
+                return
+            }
+            if !window.isZoomed {
+                window.zoom(nil)
+            }
+        }
+    }
+
+    private func fitWindowToImageSize(_ image: NSImage, showFilmstrip: Bool, showInfoSidebar: Bool, thumbnailSize: Double) {
+        // Use a small delay to ensure window is ready
+        DispatchQueue.main.async {
+            // Find the main window
+            guard let window = NSApplication.shared.windows.first(where: { $0.isKeyWindow || $0.isMainWindow }) ?? NSApplication.shared.windows.first else {
+                return
+            }
+            
+            let imageSize = image.size
+            guard imageSize.width > 0 && imageSize.height > 0 else { return }
+            
+            // Get screen bounds and available space
+            let screen = window.screen ?? NSScreen.main ?? NSScreen.screens.first ?? NSScreen.main!
+            let screenFrame = screen.visibleFrame
+            let maxWidth = screenFrame.width * 0.9  // Use 90% of screen width max
+            let maxHeight = screenFrame.height * 0.9  // Use 90% of screen height max
+            
+            // Calculate content area size needed
+            // Account for: toolbar (~50px), filmstrip (if visible), sidebar (300px if visible), padding
+            let toolbarHeight: CGFloat = 50
+            let filmstripHeight: CGFloat = showFilmstrip ? max(100, CGFloat(thumbnailSize) + 40) : 0
+            let sidebarWidth: CGFloat = showInfoSidebar ? 300 : 0
+            let padding: CGFloat = 20  // Small padding around image
+            
+            // Calculate image display size (maintain aspect ratio)
+            var displayWidth = imageSize.width
+            var displayHeight = imageSize.height
+            
+            // Constrain to available space
+            let maxImageWidth = maxWidth - sidebarWidth - padding * 2
+            let maxImageHeight = maxHeight - toolbarHeight - filmstripHeight - padding * 2
+            
+            // Scale down if needed (don't scale up)
+            let widthScale = maxImageWidth / displayWidth
+            let heightScale = maxImageHeight / displayHeight
+            let scale = min(widthScale, heightScale, 1.0)
+            
+            displayWidth *= scale
+            displayHeight *= scale
+            
+            // Calculate total window size
+            let windowWidth = displayWidth + sidebarWidth + padding * 2
+            let windowHeight = displayHeight + toolbarHeight + filmstripHeight + padding * 2
+            
+            // Ensure minimum height (width takes the exact calculated size)
+            let finalWidth = windowWidth
+            let finalHeight = max(windowHeight, 300)
+            
+            // Center window on screen (AppKit uses bottom-left origin)
+            let x = screenFrame.midX - finalWidth / 2
+            // Calculate Y so window is centered vertically
+            let centerY = screenFrame.midY
+            let y = centerY - finalHeight / 2
+            // Clamp to screen bounds
+            let clampedY = max(screenFrame.minY, min(y, screenFrame.maxY - finalHeight))
+            
+            // Resize window with animation
+            var frame = window.frame
+            let oldFrame = frame
+            frame.size = NSSize(width: finalWidth, height: finalHeight)
+            frame.origin = NSPoint(x: x, y: clampedY)
+            
+            // Only resize if size actually changed
+            if abs(oldFrame.width - finalWidth) > 1 || abs(oldFrame.height - finalHeight) > 1 {
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0.3
+                    context.allowsImplicitAnimation = true
+                    window.setFrame(frame, display: true, animate: true)
+                }
             }
         }
     }
@@ -251,6 +380,15 @@ struct ContentView: View {
             .disabled(viewModel.currentImage == nil)
             .help("Show image information")
         }
+        
+        ToolbarItem(placement: .automatic) {
+            Button(action: {
+                showSettings = true
+            }) {
+                Label("Settings", systemImage: "gearshape")
+            }
+            .help("Open settings (⌘,)")
+        }
     }
     
     @ViewBuilder
@@ -338,6 +476,7 @@ struct KeyboardShortcutsModifier: ViewModifier {
 
 struct FilmstripView: View {
     @ObservedObject var viewModel: ImageViewModel
+    @AppStorage("thumbnailSize") private var thumbnailSize: Double = 64
     
     var body: some View {
         ScrollViewReader { proxy in
@@ -362,7 +501,7 @@ struct FilmstripView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
             }
-            .frame(height: 100)
+            .frame(height: max(100, thumbnailSize + 40))
             .background(Color.black.opacity(0.95))
             .onChange(of: viewModel.currentIndex) { oldValue, newValue in
                 withAnimation {
@@ -377,6 +516,7 @@ struct ThumbnailView: View {
     let url: URL
     let thumbnail: NSImage?
     let isSelected: Bool
+    @AppStorage("thumbnailSize") private var thumbnailSize: Double = 64
     
     var body: some View {
         ZStack {
@@ -384,12 +524,12 @@ struct ThumbnailView: View {
                 Image(nsImage: thumbnail)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
-                    .frame(width: 64, height: 64)
+                    .frame(width: thumbnailSize, height: thumbnailSize)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
             } else {
                 RoundedRectangle(cornerRadius: 6)
                     .fill(Color.gray.opacity(0.3))
-                    .frame(width: 64, height: 64)
+                    .frame(width: thumbnailSize, height: thumbnailSize)
                     .overlay {
                         ProgressView()
                             .scaleEffect(0.7)

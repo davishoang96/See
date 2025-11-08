@@ -21,6 +21,13 @@ struct SeeApp: App {
             CommandGroup(replacing: .newItem) {
                 // Remove default "New" command
             }
+            
+            CommandGroup(after: .appSettings) {
+                Button("Settings...") {
+                    NotificationCenter.default.post(name: NSNotification.Name("OpenSettings"), object: nil)
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
         }
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unifiedCompact)
