@@ -10,20 +10,20 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("showFilmstrip") private var showFilmstrip = true
-    @AppStorage("imageDecodeQuality") private var imageDecodeQuality: Double = 800
     @AppStorage("thumbnailSize") private var thumbnailSize: Double = 64
     @AppStorage("fitWindowToImage") private var fitWindowToImage: Bool = false
     @AppStorage("maximizeWindowOnOpen") private var maximizeWindowOnOpen: Bool = false
+    @AppStorage("loadFullResolutionImages") private var loadFullResolutionImages: Bool = false
     
     var body: some View {
         NavigationStack {
             Form {
                 GeneralSettingsSection(
                     showFilmstrip: $showFilmstrip,
-                    imageDecodeQuality: $imageDecodeQuality,
                     thumbnailSize: $thumbnailSize,
                     fitWindowToImage: $fitWindowToImage,
-                    maximizeWindowOnOpen: $maximizeWindowOnOpen
+                    maximizeWindowOnOpen: $maximizeWindowOnOpen,
+                    loadFullResolutionImages: $loadFullResolutionImages
                 )
                 
                 AboutSection()
@@ -46,10 +46,10 @@ struct SettingsView: View {
 
 struct GeneralSettingsSection: View {
     @Binding var showFilmstrip: Bool
-    @Binding var imageDecodeQuality: Double
     @Binding var thumbnailSize: Double
     @Binding var fitWindowToImage: Bool
     @Binding var maximizeWindowOnOpen: Bool
+    @Binding var loadFullResolutionImages: Bool
     
     var body: some View {
         Section("General") {
@@ -58,28 +58,12 @@ struct GeneralSettingsSection: View {
             
             Toggle("Maximize window when opening image", isOn: $maximizeWindowOnOpen)
                 .help("Automatically maximize the window when a new image loads")
+
+            Toggle("Load full-resolution images", isOn: $loadFullResolutionImages)
+                .help("Decode images at their original pixel dimensions. Uses more memory but keeps very large photos sharp.")
             
             Toggle("Show filmstrip by default", isOn: $showFilmstrip)
                 .help("Show the filmstrip at the bottom when viewing images")
-            
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("Image decode quality")
-                    Spacer()
-                    Text("\(Int(imageDecodeQuality))px")
-                        .foregroundColor(.secondary)
-                        .monospacedDigit()
-                }
-                
-                Slider(value: $imageDecodeQuality, in: 400...2000, step: 100) {
-                    Text("Image decode quality")
-                }
-                .help("Higher values provide better quality but slower loading. Recommended: 800-1200px")
-                
-                Text("Controls the maximum pixel dimension for decoded images. Lower values load faster.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
             
             VStack(alignment: .leading, spacing: 8) {
                 HStack {

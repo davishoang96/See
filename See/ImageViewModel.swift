@@ -535,16 +535,32 @@ class ImageViewModel: ObservableObject {
             return NSImage(contentsOf: url)
         }
 
-        // Use decode quality from settings (defaults to 800 if not set)
-        let decodeQuality = UserDefaults.standard.double(forKey: "imageDecodeQuality")
-        let quality = decodeQuality > 0 ? decodeQuality : 800 // Default to 800 if not set
-        let screenScale = NSScreen.main?.backingScaleFactor ?? 2.0
-        let maxPixelSize = Int(quality * screenScale)
+        // Base decode quality in points (tuned for sharper desktop displays)
+        let baseDecodeQuality: CGFloat = 1600
+        let loadFullResolution = UserDefaults.standard.bool(forKey: "loadFullResolutionImages")
+        
+        // Determine screen-based minimum to avoid blurry fit-to-screen rendering
+        let mainScreen = NSScreen.main ?? NSScreen.screens.first
+        let screenScale = mainScreen?.backingScaleFactor ?? 2.0
+        let screenMaxDimension = max(mainScreen?.frame.width ?? 1440, mainScreen?.frame.height ?? 900)
+        let minimumPixelSize = Int(screenMaxDimension * screenScale)
+        
+        var maxPixelSize = max(Int(baseDecodeQuality * screenScale), minimumPixelSize)
+        
+        if loadFullResolution,
+           let properties = CGImageSourceCopyPropertiesAtIndex(imageSource, 0, nil) as? [CFString: Any],
+           let width = properties[kCGImagePropertyPixelWidth] as? CGFloat,
+           let height = properties[kCGImagePropertyPixelHeight] as? CGFloat {
+            let fullSize = Int(max(width, height))
+            if fullSize > 0 {
+                maxPixelSize = min(fullSize, 16000) // cap to avoid excessive memory usage
+            }
+        }
 
         let options: [CFString: Any] = [
             kCGImageSourceShouldCache: false,
             kCGImageSourceShouldAllowFloat: false, // Disable float for faster decoding
-            kCGImageSourceCreateThumbnailFromImageIfAbsent: true,
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true, // Apply EXIF orientation
             kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
         ]
