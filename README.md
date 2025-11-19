@@ -4,6 +4,7 @@ A minimalist, fast image viewer for macOS with an elegant AMOLED black interface
 
 ## Features
 
+
 ### Core Functionality
 - **Fast Image Viewing** - Opens and displays images instantly
 - **Folder Navigation** - Browse all images in a folder with left/right arrow keys
